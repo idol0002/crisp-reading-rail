@@ -27,7 +27,6 @@ export interface CrispReadingRailSettings {
   readingMemory: ReadingMemoryMap;
   outlineMaxLevel: OutlineMaxLevel;
   outlineScope: OutlineScope;
-  licenseCode: string;
 }
 
 export const DEFAULT_SETTINGS: CrispReadingRailSettings = {
@@ -39,7 +38,6 @@ export const DEFAULT_SETTINGS: CrispReadingRailSettings = {
   readingMemory: {},
   outlineMaxLevel: 4,
   outlineScope: "all",
-  licenseCode: "",
 };
 
 function normalizeProgress(value: unknown): number | null {
@@ -257,8 +255,7 @@ export function normalizeSettings(value: unknown): CrispReadingRailSettings {
     releaseSoundEnabled: candidate.releaseSoundEnabled !== false,
     waypoints: normalizeWaypointMap(candidate.waypoints),
     readingMemory: normalizeReadingMemoryMap(candidate.readingMemory),
-    outlineMaxLevel: normalizeOutlineMaxLevel(candidate.outlineMaxLevel),
-    outlineScope: normalizeOutlineScope(candidate.outlineScope),
-    licenseCode: typeof candidate.licenseCode === "string" ? candidate.licenseCode.trim() : "",
-  };
+  outlineMaxLevel: normalizeOutlineMaxLevel(candidate.outlineMaxLevel),
+  outlineScope: normalizeOutlineScope(candidate.outlineScope),
+};
 }

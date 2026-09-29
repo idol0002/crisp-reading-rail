@@ -1,4 +1,5 @@
-import { requestUrl } from "obsidian";
+// Crisp Reading Rail — 授权验证已移除，插件全功能解锁。
+// 此文件仅保留兼容接口，不再进行任何授权码校验或网络请求。
 
 export interface LicensePayload {
   product: string;
@@ -26,258 +27,42 @@ export interface LicenseVerificationCache {
   clear(): void;
 }
 
-const WORKER_VERIFY_URL = "https://license.letschips.xyz/api/verify-device";
-const LICENSE_CACHE_TTL_MS = 15 * 60 * 1000;
-
-// Crisp 5合1全家桶通用 Ed25519 嵌入公钥
-export const CRISP_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAiz41HIDpD59SH3DjKnovUO+EEhTJXjvmiug/ev9t4ZQ=
------END PUBLIC KEY-----`;
-
-export const CRISP_LICENSE_PRODUCTS = [
-  "Crisp Suite",
-  "Crisp Organize",
-  "Crisp ASR",
-  "Crisp Annotations",
-  "Crisp File Explorer",
-  "Crisp Focus",
-  "Crisp Reading Rail",
-  "Crisp Base",
-] as const;
-
 export function createLicenseVerificationCache(
-  ttlMs: number,
-  now: () => number = Date.now,
+  _ttlMs: number,
+  _now: () => number = Date.now,
 ): LicenseVerificationCache {
-  const resolved = new Map<string, {
-    expiresAt: number;
-    result: LicenseVerifyResult;
-  }>();
-  const inFlight = new Map<string, Promise<LicenseVerifyResult>>();
-
   return {
-    verify(licenseCode, targetPluginId, verifier) {
-      const key = `${targetPluginId}\u0000${licenseCode}`;
-      const cached = resolved.get(key);
-      if (cached && cached.expiresAt >= now()) {
-        return Promise.resolve(cached.result);
-      }
-      const pending = inFlight.get(key);
-      if (pending) {
-        return pending;
-      }
-      const operation = verifier().then((result) => {
-        resolved.set(key, {
-          expiresAt: now() + Math.max(0, ttlMs),
-          result,
-        });
-        return result;
-      }).finally(() => {
-        inFlight.delete(key);
-      });
-      inFlight.set(key, operation);
-      return operation;
+    verify(_licenseCode, _targetPluginId, verifier) {
+      return verifier();
     },
-    clear() {
-      resolved.clear();
-      inFlight.clear();
-    },
+    clear() {},
   };
 }
 
-const verificationCache = createLicenseVerificationCache(LICENSE_CACHE_TTL_MS);
-
 export function describeLicenseStatus(result: LicenseVerifyResult | null | undefined): string {
   if (!result?.valid || !result.payload) {
-    return `❌ 未激活（${result?.reason || "授权码无效"}）`;
+    return `✅ 已激活（全部功能已解锁）`;
   }
-  const { userName, expiresAt } = result.payload;
-  const details: string[] = [];
-  if (userName) {
-    details.push(`授权给: ${userName}`);
-  }
-  details.push(`到期时间: ${typeof expiresAt === "string" && expiresAt ? expiresAt.split("T")[0] : "长期有效"}`);
-  return `✅ 已激活（${details.join("，")}）`;
+  return `✅ 已激活（${result.payload.userName ? `授权给: ${result.payload.userName}，` : ""}长期有效）`;
 }
 
-export function clearLicenseVerificationCache(): void {
-  verificationCache.clear();
-}
+export function clearLicenseVerificationCache(): void {}
 
-
-export function base64UrlToUint8Array(base64url: string): Uint8Array {
-  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = base64.length % 4;
-  const padded = pad ? base64 + "=".repeat(4 - pad) : base64;
-  const raw = atob(padded);
-  const buffer = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) {
-    buffer[i] = raw.charCodeAt(i);
-  }
-  return buffer;
-}
-
-export async function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
-  const pemContents = pem
-    .replace("-----BEGIN PUBLIC KEY-----", "")
-    .replace("-----END PUBLIC KEY-----", "")
-    .replace(/\s/g, "");
-  const der = base64UrlToUint8Array(pemContents);
-  const derArrayBuffer = der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength) as ArrayBuffer;
-  return await window.crypto.subtle.importKey(
-    "spki",
-    derArrayBuffer,
-    { name: "Ed25519" },
-    true,
-    ["verify"]
-  );
-}
-
-function getDeviceId(): string {
-  const app = (window as unknown as { app?: { appId?: string; vault?: { getName(): string } } }).app;
-  if (app?.appId) return app.appId;
-  if (app?.vault?.getName) return `vault-${encodeURIComponent(app.vault.getName())}`;
-  return "device-default";
-}
-
-/**
- * 本地 Ed25519 解密验签 + Cloudflare 在线设备数限制校验
- */
 export async function verifyLicenseCode(
-  licenseCode: string,
-  targetPluginId: string = "crisp-reading-rail",
-  skipOnline: boolean = false,
+  _licenseCode: string,
+  _targetPluginId: string = "crisp-reading-rail",
+  _skipOnline: boolean = false,
 ): Promise<LicenseVerifyResult> {
-  const trimmed = licenseCode.trim();
-  if (skipOnline) {
-    return verifyLicenseCodeUncached(trimmed, targetPluginId, true);
-  }
-  return verificationCache.verify(trimmed, targetPluginId, () => (
-    verifyLicenseCodeUncached(trimmed, targetPluginId, false)
-  ));
-}
-
-async function verifyLicenseCodeUncached(
-  licenseCode: string,
-  targetPluginId: string,
-  skipOnline: boolean = false,
-): Promise<LicenseVerifyResult> {
-  const trimmed = licenseCode.trim();
-  if (!trimmed) {
-    return { valid: false, reason: "授权码为空" };
-  }
-
-  const parts = trimmed.split(".");
-  if (parts.length !== 2) {
-    return { valid: false, reason: "授权码格式无效（必须包含 payload 与签名）" };
-  }
-
-  const [payloadBase64, signatureBase64] = parts;
-
-  try {
-    const payloadJson = new TextDecoder().decode(base64UrlToUint8Array(payloadBase64));
-    const payload = JSON.parse(payloadJson) as LicensePayload;
-
-    if (!(CRISP_LICENSE_PRODUCTS as readonly string[]).includes(payload.product)) {
-      return { valid: false, reason: "授权码不属于 Crisp 系列插件" };
-    }
-
-    const features = Array.isArray(payload.features) ? payload.features : [];
-    const hasFeaturePermission = features.includes("all") || features.includes(targetPluginId);
-    if (!hasFeaturePermission) {
-      return { valid: false, reason: `该授权码未包含 ${targetPluginId} 权限` };
-    }
-
-    if (payload.expiresAt) {
-      const expireTime = new Date(payload.expiresAt).getTime();
-      if (Number.isFinite(expireTime) && Date.now() > expireTime) {
-        const formattedDate = payload.expiresAt.split("T")[0];
-        return { valid: false, reason: `授权已于 ${formattedDate} 到期` };
-      }
-    }
-
-    const signature = base64UrlToUint8Array(signatureBase64);
-    const signatureArrayBuffer = signature.buffer.slice(signature.byteOffset, signature.byteOffset + signature.byteLength) as ArrayBuffer;
-    const dataBytes = new TextEncoder().encode(payloadBase64);
-    const dataArrayBuffer = dataBytes.buffer.slice(dataBytes.byteOffset, dataBytes.byteOffset + dataBytes.byteLength) as ArrayBuffer;
-
-    const publicKey = await importEd25519PublicKey(CRISP_PUBLIC_KEY_PEM);
-    const isSignatureValid = await window.crypto.subtle.verify(
-      "Ed25519",
-      publicKey,
-      signatureArrayBuffer,
-      dataArrayBuffer
-    );
-
-    if (!isSignatureValid) {
-      return { valid: false, reason: "授权签名无效或伪造" };
-    }
-
-    if (skipOnline) {
-      return { valid: true, payload };
-    }
-
-    try {
-      const deviceId = getDeviceId();
-      const res = await Promise.race([
-        requestUrl({
-          url: WORKER_VERIFY_URL,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            licenseCode: trimmed,
-            deviceId: deviceId,
-            action: "activate",
-            pluginId: targetPluginId
-          }),
-          throw: false
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Crisp license check timeout")), 2500)
-        )
-      ]);
-
-      let cloudResult: { valid?: boolean; reason?: string; message?: string } | null = null;
-      try {
-        cloudResult = res.json as { valid?: boolean; reason?: string; message?: string };
-      } catch {
-        cloudResult = null;
-      }
-
-      // 1. 明确的服务端业务拒绝（200/400/401/403 且带有明确的 valid: false）
-      const isAuthDenial =
-        (res.status === 200 || res.status === 400 || res.status === 401 || res.status === 403) &&
-        cloudResult !== null &&
-        cloudResult.valid === false;
-
-      if (isAuthDenial) {
-        return {
-          valid: false,
-          reason: cloudResult?.reason || "授权已被服务端拒绝或设备数已达上限"
-        };
-      }
-
-      // 2. 服务端明确批准（200 OK 且 valid: true）
-      if (res.status === 200 && cloudResult && cloudResult.valid === true) {
-        return {
-          valid: true,
-          payload,
-          message: cloudResult.message
-        };
-      }
-
-      // 其余情况（404/408/429/5xx、网关 HTML 报错、JSON 异常等）均视为服务不可用，降级离线可用
-      if (res.status >= 400) {
-        console.warn(`[Crisp Reading Rail] License server unavailable (status ${res.status}), offline fallback`);
-      }
-    } catch {
-      // 离线时降级为本地验签（授权码已通过本地 Ed25519 校验）
-      console.debug("Crisp Reading Rail license online check offline fallback");
-    }
-
-    return { valid: true, payload };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return { valid: false, reason: `解析授权码失败: ${msg}` };
-  }
+  return {
+    valid: true,
+    payload: {
+      product: "Crisp Reading Rail",
+      licenseId: "unlocked",
+      userName: "Crisp 用户",
+      expiresAt: "",
+      features: ["all"],
+      issuedAt: new Date().toISOString(),
+    },
+    message: "已解锁",
+  };
 }

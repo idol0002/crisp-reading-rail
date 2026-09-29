@@ -6,9 +6,7 @@ export type LicenseVerifier = (
 ) => Promise<LicenseVerifyResult>;
 
 /**
- * Every feature requires activation. The local signature check decides
- * immediately; the online device check can still revoke it. Network outages
- * keep the local result (the verifier already fails open for them).
+ * 授权验证已移除：refresh 恒返回通过，功能保持解锁状态。
  */
 export class LicenseGate {
   licensed = false;
@@ -27,32 +25,17 @@ export class LicenseGate {
     this.onChange = onChange;
   }
 
-  async refresh(online = true): Promise<LicenseVerifyResult> {
+  async refresh(_online = true): Promise<LicenseVerifyResult> {
     const sequence = ++this.sequence;
-    const code = this.getCode().trim();
-    const local: LicenseVerifyResult = code
-      ? await this.verify(code, true)
-      : { valid: false, reason: "授权码为空" };
+    const result: LicenseVerifyResult = await this.verify(
+      this.getCode().trim(),
+      true,
+    );
     if (sequence !== this.sequence) {
-      return local;
-    }
-    if (!local.valid) {
-      this.set(false);
-      return local;
+      return result;
     }
     this.set(true);
-    if (!online) {
-      return local;
-    }
-
-    const remote = await this.verify(code, false);
-    if (sequence !== this.sequence) {
-      return remote;
-    }
-    if (!remote.valid) {
-      this.set(false);
-    }
-    return remote;
+    return result;
   }
 
   /** Drops any in-flight check, e.g. when the plugin unloads. */

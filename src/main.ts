@@ -21,8 +21,6 @@ import {
 import type { ReadingMemory, ReadingWaypoint } from "./types";
 import { createAboutCard, createSettingGroup } from "./settings-ui";
 import {
-  clearLicenseVerificationCache,
-  describeLicenseStatus,
   verifyLicenseCode,
   type LicenseVerifyResult,
 } from "./license";
@@ -73,7 +71,7 @@ export default class CrispReadingRailPlugin extends Plugin {
   private unloaded = false;
   private layoutReady = false;
   private readonly licenseGate = new LicenseGate(
-    () => this.settings.licenseCode,
+    () => "",
     (code, skipOnline) => verifyLicenseCode(code, LICENSE_PLUGIN_ID, skipOnline),
     (licensed) => this.applyLicensed(licensed),
   );
@@ -82,19 +80,11 @@ export default class CrispReadingRailPlugin extends Plugin {
     return this.licenseGate.licensed;
   }
 
-  async refreshLicense(online = true, notify = false): Promise<LicenseVerifyResult> {
-    const result = await this.licenseGate.refresh(online);
-    if (notify && !result.valid && !this.unloaded) {
-      new Notice(`🔒 Crisp Reading Rail 未激活（${result.reason || "授权码无效"}），请在插件设置中输入授权码`);
-    }
-    return result;
+  async refreshLicense(online = true, _notify = false): Promise<LicenseVerifyResult> {
+    return this.licenseGate.refresh(online);
   }
 
   private requireLicense(action: () => unknown): void {
-    if (!this.licensed) {
-      new Notice("🔒 Crisp Reading Rail 未激活，请在插件设置中输入授权码");
-      return;
-    }
     void action();
   }
 
@@ -360,74 +350,6 @@ class CrispReadingRailSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-
-    const licenseGroup = createSettingGroup(
-      containerEl,
-      "软件授权",
-      "本地 Ed25519 签名验证，并联网校验设备数量；离线时自动降级为本地验证。",
-      true,
-    );
-
-    const statusSetting = new Setting(licenseGroup)
-      .setName("当前激活状态")
-      .setDesc("正在验证授权状态...");
-
-    if (this.plugin.settings.licenseCode) {
-      const wasLicensed = this.plugin.licensed;
-      this.plugin.refreshLicense(true).then((verifyRes) => {
-        if (wasLicensed !== this.plugin.licensed) {
-          this.display();
-          return;
-        }
-        statusSetting.setDesc(describeLicenseStatus(verifyRes));
-      }).catch(() => {
-        statusSetting.setDesc("❌ 未激活（授权状态读取失败，请重新验证）");
-      });
-    } else {
-      statusSetting.setDesc("❌ 未激活（Crisp Reading Rail 需激活后使用，请输入授权码）");
-    }
-
-    new Setting(licenseGroup)
-      .setName("输入授权码")
-      .setDesc("激活时会向 Crisp 授权服务发送授权码、设备标识和插件 ID；结果在当前会话缓存 15 分钟。")
-      .addText((text) => text
-        .setPlaceholder("粘贴 Crisp 授权码...")
-        .setValue(this.plugin.settings.licenseCode)
-        .onChange(async (value) => {
-          clearLicenseVerificationCache();
-          this.plugin.settings.licenseCode = value.trim();
-          await this.plugin.saveSettings();
-          const wasLicensed = this.plugin.licensed;
-          await this.plugin.refreshLicense(false);
-          if (wasLicensed !== this.plugin.licensed) {
-            this.display();
-          }
-        }))
-      .addButton((button) => button
-        .setButtonText("激活 / 重新验证")
-        .setCta()
-        .onClick(async () => {
-          clearLicenseVerificationCache();
-          const result = await this.plugin.refreshLicense(true);
-          if (result.valid && result.payload) {
-            new Notice(result.payload.userName
-              ? `🎉 Crisp Reading Rail 激活成功！欢迎使用，${result.payload.userName}`
-              : "🎉 Crisp Reading Rail 激活成功！");
-            this.display();
-          } else {
-            new Notice(`❌ 激活失败: ${result.reason}`);
-            this.display();
-          }
-        }));
-
-    if (!this.plugin.licensed) {
-      createAboutCard(
-        containerEl,
-        "Crisp Reading Rail",
-        ABOUT_DESCRIPTION,
-      );
-      return;
-    }
 
     const visualBody = createSettingGroup(
       containerEl,
